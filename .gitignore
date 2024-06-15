@@ -43,3 +43,13 @@ app.*.map.json
 /android/app/release
 
 /node_modules
+
+# flutter
+ExportOptions.plist
+dart_defines/**
+scripts/**
+GoogleService-Info.plist
+google-services.json
+env*.g.dart
+firebase_options*.dart
+firebase_app_id_file.json
