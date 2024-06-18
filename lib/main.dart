@@ -1,33 +1,24 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
 
-void main() {
+Future<void> main() async {
+  // Firebaseの初期化の前処理
+  WidgetsFlutterBinding.ensureInitialized();
+  // 実際の初期化処理
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Flutter Demo',
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
@@ -36,18 +27,10 @@ class MyApp extends StatelessWidget {
   }
 }
 
+const collectionKey = 'k_taiga_todo';
+
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
   final String title;
 
   @override
@@ -55,71 +38,132 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+  List<Item> items = [];
+  final TextEditingController textEditingController = TextEditingController();
+  late FirebaseFirestore firestore;
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+  @override
+  void initState() {
+    super.initState();
+    firestore = FirebaseFirestore.instance;
+    watch();
+  }
+
+  // データ更新監視
+  Future<void> watch() async {
+    // snapshotの変更をlistenで監視する
+    firestore.collection(collectionKey).snapshots().listen((event) {
+      setState(() {
+        // reversedで逆順にしているのは、新しいデータが上に来るようにするため
+        items = event.docs.reversed
+            // mapでFirestoreのデータをItemクラスに変換
+            .map(
+              // event.docs.reversedした中身をdocumentに入れている
+              (document) => Item.fromSnapshot(document.id, document.data()),
+            )
+            // toListでListに変換 growable: falseはリストのサイズを固定するため
+            .toList(growable: false);
+      });
     });
+  }
+
+  // 保存する
+  Future<void> save() async {
+    // collectionKeyを下にcollectionを取得
+    final collection = firestore.collection(collectionKey);
+    final now = DateTime.now();
+    // 時間をkeyに保存する ミリ秒は時間はユニークになるため
+    await collection
+        .doc(now.microsecondsSinceEpoch.toString())
+        .set({"date": now, "text": textEditingController.text});
+    textEditingController.text = "";
+  }
+
+  // 完了・未完了に変更する
+  Future<void> complete(Item item) async {
+    final collection = firestore.collection(collectionKey);
+    await collection.doc(item.id).set({
+      // itemのcompletedを反転して保存
+      "completed": !item.completed,
+      // merge: trueで既存のデータとマージする
+    }, SetOptions(merge: true));
+  }
+
+  // 削除する
+  Future<void> delete(String id) async {
+    final collection = firestore.collection(collectionKey);
+    await collection.doc(id).delete();
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text(
-              'You have pushed the button this many times:',
-            ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
+        appBar: AppBar(title: const Text('TODO')),
+        body: ListView.builder(
+          itemBuilder: (context, index) {
+            // 0番目は入力フォームとして使う
+            if (index == 0) {
+              return ListTile(
+                title: TextField(
+                  controller: textEditingController,
+                ),
+                trailing: ElevatedButton(
+                  onPressed: () {
+                    save();
+                  },
+                  child: const Text('保存'),
+                ),
+              );
+            }
+            // 1番目以降はリスト表示
+            final item = items[index - 1];
+            // swipeで削除できるようにDismissibleでラップ
+            return Dismissible(
+              // swipeされたら実行される keyを一意のもので指定する
+              key: Key(item.id),
+              onDismissed: (direction) {
+                delete(item.id);
+              },
+              child: ListTile(
+                // itemのcompletedがtrueならチェックマークを表示 falseならチェックマークを表示しない
+                leading: Icon(item.completed
+                    ? Icons.check_box
+                    : Icons.check_box_outline_blank),
+                onTap: () {
+                  complete(item);
+                },
+                title: Text(item.text),
+                subtitle: Text(
+                  // -を/に変換して19文字まで表示(秒まで表示すると見づらいため)
+                  item.date.toString().replaceAll('-', '/').substring(0, 19),
+                ),
+              ),
+            );
+          },
+          itemCount: items.length + 1,
+        ));
+  }
+}
+
+class Item {
+  const Item(
+      {required this.id,
+      required this.text,
+      required this.completed,
+      required this.date});
+  final String id;
+  final String text;
+  final bool completed;
+  final DateTime date;
+
+  // factory constructorとはフィールド情報から離れた値でインスタンスを生成するためのコンストラクタ
+  // この場合はFirestoreから取得したデータをItemクラスに変換するためのコンストラクタ
+  factory Item.fromSnapshot(String id, Map<String, dynamic> document) {
+    return Item(
+      id: id,
+      text: document['text'].toString() ?? '',
+      completed: document['completed'] ?? false,
+      date: (document['date'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
 }
