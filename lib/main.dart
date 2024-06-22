@@ -1,3 +1,5 @@
+import 'dart:ffi';
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -27,10 +29,9 @@ class MyApp extends StatelessWidget {
   }
 }
 
-const collectionKey = 'k_taiga_todo';
-
 class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
+  const MyHomePage({Key? key, required this.title}) : super(key: key);
+
   final String title;
 
   @override
@@ -38,132 +39,197 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  List<Item> items = [];
-  final TextEditingController textEditingController = TextEditingController();
-  late FirebaseFirestore firestore;
+  String name = '';
+  String room = '';
 
-  @override
-  void initState() {
-    super.initState();
-    firestore = FirebaseFirestore.instance;
-    watch();
+  void showError(String message) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          content: Text(message),
+        );
+      },
+    );
   }
 
-  // データ更新監視
-  Future<void> watch() async {
-    // snapshotの変更をlistenで監視する
-    firestore.collection(collectionKey).snapshots().listen((event) {
-      setState(() {
-        // reversedで逆順にしているのは、新しいデータが上に来るようにするため
-        items = event.docs.reversed
-            // mapでFirestoreのデータをItemクラスに変換
-            .map(
-              // event.docs.reversedした中身をdocumentに入れている
-              (document) => Item.fromSnapshot(document.id, document.data()),
-            )
-            // toListでListに変換 growable: falseはリストのサイズを固定するため
-            .toList(growable: false);
-      });
-    });
-  }
+  void enter() {
+    if (name.isEmpty) {
+      showError('あなたの名前を入力してください');
+      return;
+    }
 
-  // 保存する
-  Future<void> save() async {
-    // collectionKeyを下にcollectionを取得
-    final collection = firestore.collection(collectionKey);
-    final now = DateTime.now();
-    // 時間をkeyに保存する ミリ秒は時間はユニークになるため
-    await collection
-        .doc(now.microsecondsSinceEpoch.toString())
-        .set({"date": now, "text": textEditingController.text});
-    textEditingController.text = "";
-  }
+    if (room.isEmpty) {
+      showError('部屋名を入力してください');
+      return;
+    }
 
-  // 完了・未完了に変更する
-  Future<void> complete(Item item) async {
-    final collection = firestore.collection(collectionKey);
-    await collection.doc(item.id).set({
-      // itemのcompletedを反転して保存
-      "completed": !item.completed,
-      // merge: trueで既存のデータとマージする
-    }, SetOptions(merge: true));
-  }
-
-  // 削除する
-  Future<void> delete(String id) async {
-    final collection = firestore.collection(collectionKey);
-    await collection.doc(id).delete();
+    Navigator.push(context, MaterialPageRoute(
+      builder: (context) {
+        return ChatPage(name: name, room: room);
+      },
+    ));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-        appBar: AppBar(title: const Text('TODO')),
-        body: ListView.builder(
-          itemBuilder: (context, index) {
-            // 0番目は入力フォームとして使う
-            if (index == 0) {
-              return ListTile(
-                title: TextField(
-                  controller: textEditingController,
-                ),
-                trailing: ElevatedButton(
-                  onPressed: () {
-                    save();
-                  },
-                  child: const Text('保存'),
-                ),
-              );
-            }
-            // 1番目以降はリスト表示
-            final item = items[index - 1];
-            // swipeで削除できるようにDismissibleでラップ
-            return Dismissible(
-              // swipeされたら実行される keyを一意のもので指定する
-              key: Key(item.id),
-              onDismissed: (direction) {
-                delete(item.id);
-              },
-              child: ListTile(
-                // itemのcompletedがtrueならチェックマークを表示 falseならチェックマークを表示しない
-                leading: Icon(item.completed
-                    ? Icons.check_box
-                    : Icons.check_box_outline_blank),
-                onTap: () {
-                  complete(item);
+        appBar: AppBar(title: const Text('チャット')),
+        body: ListView(
+          children: [
+            ListTile(
+              title: TextField(
+                decoration: InputDecoration(hintText: 'あなたの名前'),
+                onChanged: (value) {
+                  name = value;
                 },
-                title: Text(item.text),
-                subtitle: Text(
-                  // -を/に変換して19文字まで表示(秒まで表示すると見づらいため)
-                  item.date.toString().replaceAll('-', '/').substring(0, 19),
-                ),
               ),
-            );
-          },
-          itemCount: items.length + 1,
+            ),
+            ListTile(
+              title: TextField(
+                decoration: InputDecoration(hintText: '部屋名'),
+                onChanged: (value) {
+                  room = value;
+                },
+              ),
+            ),
+            ListTile(
+              title: ElevatedButton(
+                onPressed: () {
+                  enter();
+                },
+                child: Text('入室する'),
+              ),
+            ),
+          ],
         ));
+  }
+}
+
+class ChatPage extends StatefulWidget {
+  ChatPage({required this.name, required this.room, super.key});
+
+  String name;
+  String room;
+
+  @override
+  State<ChatPage> createState() => _ChatPageState();
+}
+
+class _ChatPageState extends State<ChatPage> {
+  List<Item> items = [];
+  late FirebaseFirestore firestore;
+  late CollectionReference<Map<string, dynamic>> collection;
+  final TextEditingController textEditingController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    firestore = FirebaseFirestore.instance;
+    // roooms/{room}/itemsというコレクションを参照する {room}はStatefulWidgetのプロパティのroomを使う
+    collection =
+        firestore.collection('rooms').doc(widget.room).collection('items');
+    watch();
+  }
+
+  // データの更新監視
+  Future<void> watch() async {
+    // collection.snapshots()はコレクションの変更を監視しeventを返す
+    collection.snapshots().listen((event) {
+      // mountedはStateオブジェクトのプロパティで、ウィジェットが描画されているかどうかを示す
+      if (mounted) {
+        setState(() {
+          // eventを元にItemのリストを作成
+          items = event.docs.reversed
+              .map(
+                  (document) => Item.fromSnapShot(document.id, document.data()))
+              // growable: falseはリストのサイズを固定する
+              .toList(growable: false);
+        });
+      }
+    });
+  }
+
+  // データの更新
+  Future<void> save() async {
+    final now = DateTime.now();
+    await collection.doc(now.millisecondsSinceEpoch.toString()).set({
+      "date": Timestamp.fromDate(now),
+      "name": widget.name,
+      "text": textEditingController.text,
+    });
+
+    textEditingController.text = '';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.room)),
+      body: Column(
+        children: [
+          // Expandedは子ウィジェットが親ウィジェットのサイズに合わせて拡張される
+          Expanded(
+              child: ListView.builder(
+                  reverse: true,
+                  itemBuilder: (context, index) {
+                    final item = items[index];
+                    final isMe = item.name == widget.name;
+                    return Padding(
+                      padding: isMe
+                          ? EdgeInsets.only(left: 80, right: 16, top: 16)
+                          : EdgeInsets.only(left: 16, right: 80, top: 16),
+                      child: ListTile(
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                        tileColor: isMe ? Colors.tealAccent : Colors.black12,
+                        subtitle: Text(
+                          '{$item.name}{$item.date.toString().replaceAll(' -
+                              ', ' / ').substring(0, 19)}',
+                        ),
+                        title: Text(item.text),
+                      ),
+                    );
+                  },
+                  // itemsの長さの分だけこのwidgetをループする
+                  itemCount: items.length)),
+          SafeArea(
+              child: ListTile(
+            title: TextField(
+              controller: textEditingController,
+            ),
+            trailing: ElevatedButton(
+                onPressed: () {
+                  save();
+                },
+                child: const Text('送信')),
+          )),
+        ],
+      ),
+    );
   }
 }
 
 class Item {
   const Item(
       {required this.id,
+      required this.name,
       required this.text,
-      required this.completed,
       required this.date});
+
   final String id;
+  final String name;
   final String text;
-  final bool completed;
   final DateTime date;
 
-  // factory constructorとはフィールド情報から離れた値でインスタンスを生成するためのコンストラクタ
-  // この場合はFirestoreから取得したデータをItemクラスに変換するためのコンストラクタ
-  factory Item.fromSnapshot(String id, Map<String, dynamic> document) {
+  factory Item.fromSnapShot(String id, Map<String, dynamic> document) {
     return Item(
-      id: id,
-      text: document['text'].toString() ?? '',
-      completed: document['completed'] ?? false,
-      date: (document['date'] as Timestamp?)?.toDate() ?? DateTime.now(),
-    );
+        id: id,
+        name: document['name'].toString() ?? '',
+        text: document['text'].toString() ?? '',
+        // Timestamp?はnull許容型の?
+        // ?.toDate()はnull条件演算子の?で、nullの場合はnullを返す
+        // ??はnull結合演算子で、左辺がnullの場合は右辺を返す
+        date: (document['date'] as Timestamp?)?.toDate() ?? DateTime.now());
   }
 }
